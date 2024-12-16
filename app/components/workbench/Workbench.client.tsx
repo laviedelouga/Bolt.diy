@@ -17,11 +17,16 @@ import { renderLogger } from '~/utils/logger';
 import { EditorPanel } from './EditorPanel';
 import { Preview } from './Preview';
 import useViewport from '~/lib/hooks';
-import Cookies from 'js-cookie';
+import { ensureEncryption, lookupSavedPassword } from '~/lib/hooks/useCredentials';
 
 interface WorkspaceProps {
   chatStarted?: boolean;
   isStreaming?: boolean;
+}
+
+interface GitCredentials {
+  github: boolean;
+  gitlab: boolean;
 }
 
 const viewTransition = { ease: cubicEasingFn };
@@ -58,6 +63,10 @@ export const Workbench = memo(({ chatStarted, isStreaming }: WorkspaceProps) => 
   renderLogger.trace('Workbench');
 
   const [isSyncing, setIsSyncing] = useState(false);
+  const [hasCredentials, setHasCredentials] = useState<GitCredentials>({
+    github: false,
+    gitlab: false,
+  });
 
   const hasPreview = useStore(computed(workbenchStore.previews, (previews) => previews.length > 0));
   const showWorkbench = useStore(workbenchStore.showWorkbench);
@@ -82,6 +91,20 @@ export const Workbench = memo(({ chatStarted, isStreaming }: WorkspaceProps) => 
   useEffect(() => {
     workbenchStore.setDocuments(files);
   }, [files]);
+
+  useEffect(() => {
+    checkGitCredentials();
+  }, []);
+
+  const checkGitCredentials = async () => {
+    const githubAuth = await lookupSavedPassword('github.com');
+    const gitlabAuth = await lookupSavedPassword('gitlab.com');
+
+    setHasCredentials({
+      github: !!(githubAuth?.username && githubAuth?.password),
+      gitlab: !!(gitlabAuth?.username && gitlabAuth?.password),
+    });
+  };
 
   const onEditorChange = useCallback<OnEditorChange>((update) => {
     workbenchStore.setCurrentDocumentContent(update.content);
@@ -119,6 +142,38 @@ export const Workbench = memo(({ chatStarted, isStreaming }: WorkspaceProps) => 
       setIsSyncing(false);
     }
   }, []);
+
+  const handleGitPush = async (provider: 'github' | 'gitlab') => {
+    const repoName = prompt(
+      `Please enter a name for your new ${provider === 'github' ? 'GitHub' : 'GitLab'} repository:`,
+      'bolt-generated-project',
+    );
+
+    // TODO store and load repoName from downloaded project
+    if (!repoName) {
+      toast.error('Repository name is required');
+      return;
+    }
+
+    if (!(await ensureEncryption())) {
+      toast.error('Failed to initialize secure storage');
+      return;
+    }
+
+    const auth = await lookupSavedPassword(`${provider}.com`);
+
+    if (auth?.username && auth?.password) {
+      if (provider === 'github') {
+        workbenchStore.pushToGitHub(repoName, auth.username, auth.password);
+      } else {
+        workbenchStore.pushToGitLab(repoName, auth.username, auth.password);
+      }
+    } else {
+      toast.info(
+        `Please set up your ${provider === 'github' ? 'GitHub' : 'GitLab'} credentials in the Connections tab`,
+      );
+    }
+  };
 
   return (
     chatStarted && (
@@ -168,40 +223,18 @@ export const Workbench = memo(({ chatStarted, isStreaming }: WorkspaceProps) => 
                       <div className="i-ph:terminal" />
                       Toggle Terminal
                     </PanelHeaderButton>
-                    <PanelHeaderButton
-                      className="mr-1 text-sm"
-                      onClick={() => {
-                        const repoName = prompt(
-                          'Please enter a name for your new GitHub repository:',
-                          'bolt-generated-project',
-                        );
-
-                        if (!repoName) {
-                          alert('Repository name is required. Push to GitHub cancelled.');
-                          return;
-                        }
-
-                        const githubUsername = Cookies.get('githubUsername');
-                        const githubToken = Cookies.get('githubToken');
-
-                        if (!githubUsername || !githubToken) {
-                          const usernameInput = prompt('Please enter your GitHub username:');
-                          const tokenInput = prompt('Please enter your GitHub personal access token:');
-
-                          if (!usernameInput || !tokenInput) {
-                            alert('GitHub username and token are required. Push to GitHub cancelled.');
-                            return;
-                          }
-
-                          workbenchStore.pushToGitHub(repoName, usernameInput, tokenInput);
-                        } else {
-                          workbenchStore.pushToGitHub(repoName, githubUsername, githubToken);
-                        }
-                      }}
-                    >
-                      <div className="i-ph:github-logo" />
-                      Push to GitHub
-                    </PanelHeaderButton>
+                    {hasCredentials.github && (
+                      <PanelHeaderButton className="mr-1 text-sm" onClick={() => handleGitPush('github')}>
+                        <div className="i-ph:github-logo" />
+                        Push to GitHub
+                      </PanelHeaderButton>
+                    )}
+                    {hasCredentials.gitlab && (
+                      <PanelHeaderButton className="mr-1 text-sm" onClick={() => handleGitPush('gitlab')}>
+                        <div className="i-ph:gitlab-logo" />
+                        Push to GitLab
+                      </PanelHeaderButton>
+                    )}
                   </div>
                 )}
                 <IconButton
