@@ -9,12 +9,65 @@ interface ImportFolderButtonProps {
   className?: string;
   importChat?: (description: string, messages: Message[]) => Promise<void>;
 }
+interface FileWithPath extends File {
+  webkitRelativePath: string;
+}
 
 export const ImportFolderButton: React.FC<ImportFolderButtonProps> = ({ className, importChat }) => {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const allFiles = Array.from(e.target.files || []);
+    let allFiles = Array.from(e.target.files || []) as FileWithPath[];
+
+    const gitignoreFiles = allFiles.filter((file) => file.webkitRelativePath.endsWith('.gitignore'));
+    const gitignorePatterns: string[] = ['.git/**', '.git/*', 'node_modules/**', '.env*'];
+
+    // Process all .gitignore files
+    for (const gitignoreFile of gitignoreFiles) {
+      const gitignoreContent = await gitignoreFile.text();
+      const gitignorePath = gitignoreFile.webkitRelativePath;
+      const gitignoreDir = gitignorePath.substring(0, gitignorePath.lastIndexOf('/'));
+
+      const patterns = gitignoreContent
+        .split('\n')
+        .filter((line: string) => line.trim() !== '' && !line.startsWith('#'))
+        .map((pattern: string) => {
+          // Make pattern relative to the .gitignore location
+          if (gitignoreDir) {
+            return `${gitignoreDir}/${pattern}`;
+          }
+
+          return pattern;
+        });
+
+      gitignorePatterns.push(...patterns);
+    }
+
+    const isIgnored = (filePath: string) => {
+      return gitignorePatterns.some((pattern) => {
+        // Convert glob pattern to regex
+        const regexPattern = pattern
+          .replace(/\./g, '\\.')
+          .replace(/\*\*/g, '.*')
+          .replace(/\*/g, '[^/]*')
+          .replace(/\?/g, '.');
+        const regex = new RegExp(`^${regexPattern}$`);
+
+        // Test both the full path and path segments
+        const pathSegments = filePath.split('/');
+
+        return (
+          regex.test(filePath) ||
+          pathSegments.some((_, index) => {
+            const partialPath = pathSegments.slice(0, index + 1).join('/');
+            return regex.test(partialPath);
+          })
+        );
+      });
+    };
+
+    const nonIgnoredFiles = allFiles.filter((file) => !isIgnored(file.webkitRelativePath));
+    allFiles = nonIgnoredFiles;
 
     if (allFiles.length > MAX_FILES) {
       const error = new Error(`Too many files: ${allFiles.length}`);
