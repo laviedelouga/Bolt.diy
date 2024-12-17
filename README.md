@@ -168,8 +168,8 @@ DEFAULT_NUM_CTX=8192
 2. **Run the Container**:  
    Use Docker Compose profiles to manage environments:  
    ```bash  
-   docker-compose --profile development up  # Development  
-   docker-compose --profile production up   # Production  
+   docker compose --profile development up  # Development  
+   docker compose --profile production up   # Production  
    ```  
 
    - With the development profile, changes to your code will automatically reflect in the running container (hot reloading).  
